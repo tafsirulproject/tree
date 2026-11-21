@@ -20095,7 +20095,7 @@ async function treeCloudLoad() {
   if (configRes.error) throw configRes.error;
   return {
     members: (membersRes.data||[]).map(x=>({id:x.id,name:x.name,totalDeposit:Number(x.total_deposit||0),loanBalance:Number(x.loan_balance||0)})),
-    logs: (logsRes.data||[]).map(x=>({id:x.id,date:x.log_date,memberName:x.member_name,type:x.type,amount:Number(x.amount||0),note:x.note||""})),
+    logs: (logsRes.data||[]).map(x=>({id:x.id,memberId:x.member_id||null,date:x.log_date,memberName:x.member_name,type:x.type,amount:Number(x.amount||0),note:x.note||""})),
     config: configRes.data ? {title:configRes.data.title,dailyRate:Number(configRes.data.daily_rate),startDate:configRes.data.start_date,totalDays:Number(configRes.data.total_days)} : null
   };
 }
