@@ -13,7 +13,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Baloo+Da+2:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin>// \0rolldown/runtime.js
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script type="module" crossorigin>// \0rolldown/runtime.js
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -54703,6 +54704,19 @@ var NAV_ITEMS = [
 		icon: FileText
 	}
 ];
+// Tree cloud sync helpers
+const TREE_SUPABASE_URL="https://okrshnhpwpjeebnbpoel.supabase.co";
+const TREE_SUPABASE_KEY="sb_publishable__LglVJ2MyQfeXn7QM7ToGQ_4O5vzmGO";
+const treeSupabase=window.supabase&&window.supabase.createClient(TREE_SUPABASE_URL,TREE_SUPABASE_KEY);
+async function treeCloudLoad(){
+ const [m,l,c]=await Promise.all([treeSupabase.from("tree_members").select("*"),treeSupabase.from("tree_logs").select("*").order("created_at",{ascending:false}),treeSupabase.from("tree_config").select("*").eq("id","main").maybeSingle()]);
+ if(m.error)throw m.error;if(l.error)throw l.error;if(c.error)throw c.error;
+ return {members:(m.data||[]).map(x=>({id:x.id,name:x.name,totalDeposit:Number(x.total_deposit||0),loanBalance:Number(x.loan_balance||0)})),logs:(l.data||[]).map(x=>({id:x.id,memberId:x.member_id||null,date:x.log_date,memberName:x.member_name,type:x.type,amount:Number(x.amount||0),note:x.note||""})),config:c.data?{title:c.data.title,dailyRate:Number(c.data.daily_rate||0),startDate:c.data.start_date,totalDays:Number(c.data.total_days||0)}:null};
+}
+async function treeCloudSaveMembers(a){const rows=a.map(x=>({id:x.id,name:x.name,total_deposit:x.totalDeposit||0,loan_balance:x.loanBalance||0,updated_at:new Date().toISOString()}));if(rows.length){const {error}=await treeSupabase.from("tree_members").upsert(rows);if(error)throw error;}const {data,error}=await treeSupabase.from("tree_members").select("id");if(error)throw error;const keep=new Set(a.map(x=>x.id)),stale=(data||[]).map(x=>x.id).filter(x=>!keep.has(x));if(stale.length){const {error:e}=await treeSupabase.from("tree_members").delete().in("id",stale);if(e)throw e;}}
+async function treeCloudSaveLogs(a){const rows=a.map(x=>({id:x.id,member_id:x.memberId||null,member_name:x.memberName,type:x.type,amount:x.amount||0,note:x.note||"",log_date:x.date||""}));if(rows.length){const {error}=await treeSupabase.from("tree_logs").upsert(rows);if(error)throw error;}const {data,error}=await treeSupabase.from("tree_logs").select("id");if(error)throw error;const keep=new Set(a.map(x=>x.id)),stale=(data||[]).map(x=>x.id).filter(x=>!keep.has(x));if(stale.length){const {error:e}=await treeSupabase.from("tree_logs").delete().in("id",stale);if(e)throw e;}}
+async function treeCloudSaveConfig(x){if(!x)return;const {error}=await treeSupabase.from("tree_config").upsert({id:"main",title:x.title,daily_rate:x.dailyRate||0,start_date:x.startDate||"",total_days:x.totalDays||0,updated_at:new Date().toISOString()});if(error)throw error;}
+
 function getInitialPage() {
 	const hash = window.location.hash.replace("#", "");
 	return VALID_PAGES.includes(hash) ? hash : "dashboard";
@@ -54735,15 +54749,12 @@ function App() {
 	const [loanNote, setLoanNote] = (0, import_react.useState)("");
 	const [confirmAction, setConfirmAction] = (0, import_react.useState)(null);
 	const [toast, setToast] = (0, import_react.useState)(null);
-	(0, import_react.useEffect)(() => {
-		saveConfig(config);
-	}, [config]);
-	(0, import_react.useEffect)(() => {
-		saveMembers(members);
-	}, [members]);
-	(0, import_react.useEffect)(() => {
-		saveLogs(logs);
-	}, [logs]);
+	const [cloudReady, setCloudReady] = (0, import_react.useState)(false);
+	(0, import_react.useEffect)(() => { saveConfig(config); if(cloudReady) treeCloudSaveConfig(config).catch(e=>console.error("Tree config sync",e)); }, [config,cloudReady]);
+	(0, import_react.useEffect)(() => { saveMembers(members); if(cloudReady) treeCloudSaveMembers(members).catch(e=>console.error("Tree members sync",e)); }, [members,cloudReady]);
+	(0, import_react.useEffect)(() => { saveLogs(logs); if(cloudReady) treeCloudSaveLogs(logs).catch(e=>console.error("Tree logs sync",e)); }, [logs,cloudReady]);
+	(0, import_react.useEffect)(() => { let cancelled=false; (async()=>{try{const r=await treeCloudLoad();if(cancelled)return;if(r.members.length)setMembers(r.members);else if(members.length)await treeCloudSaveMembers(members);if(r.logs.length)setLogs(r.logs);else if(logs.length)await treeCloudSaveLogs(logs);if(r.config)setConfig(r.config);else await treeCloudSaveConfig(config);if(!cancelled)setCloudReady(true);}catch(e){console.error("Tree Supabase load failed; local data preserved",e);if(!cancelled)setCloudReady(true);}})();return()=>{cancelled=true;};}, []);
+
 	(0, import_react.useEffect)(() => {
 		const onHashChange = () => {
 			const next = window.location.hash.replace("#", "");
@@ -59126,6 +59137,5 @@ function App() {
   <body class="bg-slate-950 text-slate-100 antialiased selection:bg-emerald-500 selection:text-white">
     <div id="root"></div>
   </body>
-<!-- cache refresh: original app restored -->
 </html>
 
