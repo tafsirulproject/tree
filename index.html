@@ -13,7 +13,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Baloo+Da+2:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin>// \0rolldown/runtime.js
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script type="module" crossorigin>// \0rolldown/runtime.js
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -20078,7 +20079,52 @@ function filterProps(props, isDom, forwardMotionProps) {
 * ```jsx
 * import { motion, MotionConfig } from "framer-motion"
 *
-* export function App() {
+* export // Cloud sync (Supabase)
+var TREE_SUPABASE_URL = "https://suafsqzeegzvnkwicmmg.supabase.co";
+var TREE_SUPABASE_KEY = "sb_publishable_GxVdL1Y-m726QvC9umy9ow_tayNgPtS";
+var treeSupabase = window.supabase?.createClient(TREE_SUPABASE_URL, TREE_SUPABASE_KEY);
+async function treeCloudLoad() {
+  if (!treeSupabase) throw new Error("Supabase SDK unavailable");
+  const [membersRes, logsRes, configRes] = await Promise.all([
+    treeSupabase.from("tree_members").select("*"),
+    treeSupabase.from("tree_logs").select("*").order("created_at", {ascending:false}),
+    treeSupabase.from("tree_config").select("*").eq("id","main").maybeSingle()
+  ]);
+  if (membersRes.error) throw membersRes.error;
+  if (logsRes.error) throw logsRes.error;
+  if (configRes.error) throw configRes.error;
+  return {
+    members: (membersRes.data||[]).map(x=>({id:x.id,name:x.name,totalDeposit:Number(x.total_deposit||0),loanBalance:Number(x.loan_balance||0)})),
+    logs: (logsRes.data||[]).map(x=>({id:x.id,date:x.log_date,memberName:x.member_name,type:x.type,amount:Number(x.amount||0),note:x.note||""})),
+    config: configRes.data ? {title:configRes.data.title,dailyRate:Number(configRes.data.daily_rate),startDate:configRes.data.start_date,totalDays:Number(configRes.data.total_days)} : null
+  };
+}
+async function treeCloudSaveMembers(members) {
+  if (!treeSupabase) return;
+  const rows=members.map(m=>({id:m.id,name:m.name,total_deposit:m.totalDeposit||0,loan_balance:m.loanBalance||0,updated_at:new Date().toISOString()}));
+  if(rows.length){const {error}=await treeSupabase.from("tree_members").upsert(rows);if(error)throw error;}
+  const {data,error}=await treeSupabase.from("tree_members").select("id");
+  if(error)throw error;
+  const keep=new Set(members.map(m=>m.id));
+  const stale=(data||[]).map(x=>x.id).filter(id=>!keep.has(id));
+  if(stale.length){const {error:e}=await treeSupabase.from("tree_members").delete().in("id",stale);if(e)throw e;}
+}
+async function treeCloudSaveLogs(logs) {
+  if(!treeSupabase)return;
+  const rows=logs.map(l=>({id:l.id,member_id:l.memberId||null,member_name:l.memberName,type:l.type,amount:l.amount,note:l.note||"",log_date:l.date||new Date().toLocaleString("bn-BD")}));
+  if(rows.length){const {error}=await treeSupabase.from("tree_logs").upsert(rows);if(error)throw error;}
+  const {data,error}=await treeSupabase.from("tree_logs").select("id");
+  if(error)throw error;
+  const keep=new Set(logs.map(l=>l.id));
+  const stale=(data||[]).map(x=>x.id).filter(id=>!keep.has(id));
+  if(stale.length){const {error:e}=await treeSupabase.from("tree_logs").delete().in("id",stale);if(e)throw e;}
+}
+async function treeCloudSaveConfig(config) {
+  if(!treeSupabase||!config)return;
+  const {error}=await treeSupabase.from("tree_config").upsert({id:"main",title:config.title,daily_rate:config.dailyRate,start_date:config.startDate,total_days:config.totalDays,updated_at:new Date().toISOString()});
+  if(error)throw error;
+}
+function App() {
 *   return (
 *     <MotionConfig transition={{ type: "spring" }}>
 *       <motion.div animate={{ x: 100 }} />
@@ -54712,6 +54758,8 @@ function App() {
 	const [config, setConfig] = (0, import_react.useState)(() => loadConfig());
 	const [members, setMembers] = (0, import_react.useState)(() => loadMembers());
 	const [logs, setLogs] = (0, import_react.useState)(() => loadLogs());
+	const [cloudReady, setCloudReady] = (0, import_react.useState)(false);
+	const [cloudStatus, setCloudStatus] = (0, import_react.useState)("connecting");
 	const [isAdmin, setIsAdmin] = (0, import_react.useState)(false);
 	const [simulatedDay, setSimulatedDay] = (0, import_react.useState)(null);
 	const [searchQuery, setSearchQuery] = (0, import_react.useState)("");
@@ -54737,13 +54785,37 @@ function App() {
 	const [toast, setToast] = (0, import_react.useState)(null);
 	(0, import_react.useEffect)(() => {
 		saveConfig(config);
-	}, [config]);
+		if(cloudReady) treeCloudSaveConfig(config).catch(e=>{console.error("Supabase config sync",e);setCloudStatus("error");});
+	}, [config, cloudReady]);
 	(0, import_react.useEffect)(() => {
 		saveMembers(members);
-	}, [members]);
+		if(cloudReady) treeCloudSaveMembers(members).catch(e=>{console.error("Supabase member sync",e);setCloudStatus("error");});
+	}, [members, cloudReady]);
 	(0, import_react.useEffect)(() => {
 		saveLogs(logs);
-	}, [logs]);
+		if(cloudReady) treeCloudSaveLogs(logs).catch(e=>{console.error("Supabase log sync",e);setCloudStatus("error");});
+	}, [logs, cloudReady]);
+	(0, import_react.useEffect)(() => {
+		let cancelled=false;
+		(async()=>{
+			try {
+				const remote=await treeCloudLoad();
+				if(cancelled)return;
+				if(remote.members.length) setMembers(remote.members);
+				else if(members.length) await treeCloudSaveMembers(members);
+				if(remote.logs.length) setLogs(remote.logs);
+				else if(logs.length) await treeCloudSaveLogs(logs);
+				if(remote.config) setConfig(remote.config);
+				else await treeCloudSaveConfig(config);
+				setCloudStatus("online");
+				setCloudReady(true);
+			}catch(e){
+				console.error("Supabase initial load failed",e);
+				if(!cancelled){setCloudStatus("offline");setCloudReady(true);}
+			}
+		})();
+		return ()=>{cancelled=true;};
+	}, []);
 	(0, import_react.useEffect)(() => {
 		const onHashChange = () => {
 			const next = window.location.hash.replace("#", "");
